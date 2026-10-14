@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<!--
+  audit_lot_bizcom.html — Audit smartphone du lot Bizcom (sinistres CCS Hallennes)
+  ─────────────────────────────────────────────────────────────────────────────
+  v1.4 — 14/10/2026
+  - PALETTES : bouton « Nouvelle palette » → crée une ligne dans la table Palettes (tblQnwMbuL0DOwXaU) ; le numéro
+    P-xxx vient du Numéro auto d'Airtable → jamais deux fois le même numéro, même avec 4 téléphones.
+    Chaque appareil validé est relié à la palette en cours de l'opérateur (champ « Nouvelle palette »).
+  - PALETTES ENVIE : si Décision = Garder → l'opérateur choisit Envie 1 / Envie 2… ou « + Nouvelle palette Envie ».
+    Le téléphone retient le dernier choix. Les lignes vertes (présélection) arrivent pré-cochées sur Garder.
+  - LISTE A4 : écran « Imprimer une liste » (toutes les palettes, nb d'appareils, valeur d'achat) + impression.
+  - BATTERIE : carte « Batterie » (PC portables, montres, tablettes/liseuses, Switch / ROG Ally, autres).
+    Gonflée / Fuite / Chauffe → bandeau rouge, photo batterie obligatoire, case « retirée et isolée » obligatoire.
+    L'appareil suit ensuite son chemin normal (palette du lot ou Envie).
+  - MONTRES : « Chargeur présent ? » — si Non : pas de test (S'allume = Non testé), contrôle visuel seulement,
+    défaut « Dos soulevé (batterie gonflée) » qui déclenche l'alerte batterie.
+  - CONNEXION : bandeau rouge « Pas de connexion à Airtable » avec la raison, au lieu d'un faux « introuvable ».
+  v1.3 — 13/10/2026 : menus par type d'appareil, contrôles spécifiques, bloc Décision, type pour hors listing
+  v1.2 — 13/10/2026 : correctif « undefined » (returnFieldsByFieldId dans le corps des PATCH/POST)
+  v1.1 — 13/10/2026 : recherche NOPROFORMA + doublons + n° de fiche, choix si numéro ambigu
+  v1.0 — 13/10/2026 : saisie pavé numérique, audit, photos, verrou multi-opérateurs, hors listing
+  Base : appcCnZx0H4Dd9SM5 · Tables : tblQ9qckCqsh3fjwP (Appareils lot), tblQnwMbuL0DOwXaU (Palettes)
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#1F4E78">
+<title>Audit lot Bizcom</title>
+<style>
+  :root{--bg:#f3f5f8;--card:#fff;--ink:#1b2430;--mut:#667085;--pri:#1F4E78;--ok:#1e8e3e;--okbg:#e6f4ea;--warn:#b26a00;--warnbg:#fff4e0;--bad:#c62828;--badbg:#fdecea;--line:#d8dee6;--sel:#1F4E78}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:16px}
+  header{position:sticky;top:0;z-index:5;background:var(--pri);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px}
+  header h1{font-size:17px;margin:0;flex:1}
+  header .who{font-size:13px;opacity:.95;text-align:right}
+  #hdrPal{font-weight:700;font-size:14px}
+  #connBanner{position:sticky;top:44px;z-index:6;background:var(--bad);color:#fff;font-weight:700;padding:10px 14px;font-size:14px}
+  main{padding:12px;max-width:560px;margin:0 auto}
+  .card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  h2{font-size:15px;margin:0 0 10px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
+  .hidden{display:none!important}
+  input,textarea,select{width:100%;font-size:18px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+  textarea{font-size:16px;min-height:70px}
+  label.small{display:block;font-size:13px;color:var(--mut);margin:8px 0 4px}
+  label.check{display:flex;gap:10px;align-items:center;font-weight:700;margin-top:10px;font-size:16px}
+  label.check input{width:26px;height:26px}
+  .btn{display:block;width:100%;border:0;border-radius:12px;padding:15px;font-size:18px;font-weight:600;background:var(--pri);color:#fff;margin-top:10px}
+  .btn.sec{background:#e8edf3;color:var(--ink)}
+  .btn.ok{background:var(--ok)} .btn.bad{background:var(--bad)}
+  .btn:disabled{opacity:.5}
+  .row{display:flex;gap:8px} .row>*{flex:1}
+  #display{font-size:40px;text-align:center;letter-spacing:4px;font-weight:700;padding:8px;min-height:62px;border-bottom:2px solid var(--line);margin-bottom:10px}
+  .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .pad button{font-size:28px;padding:16px 0;border-radius:12px;border:1px solid var(--line);background:#fff;font-weight:600}
+  .pad button.act{background:#e8edf3}
+  .choices{display:flex;flex-wrap:wrap;gap:8px}
+  .choice{border:2px solid var(--line);background:#fff;border-radius:10px;padding:12px 14px;font-size:16px;font-weight:600;flex:1 1 auto;min-width:72px;text-align:center}
+  .choice.on{border-color:var(--sel);background:var(--sel);color:#fff}
+  .choice.req{border-style:dashed}
+  .choice.req.on{border-style:solid}
+  .choice.danger.on{border-color:var(--bad);background:var(--bad)}
+  .choice.envie.on{border-color:var(--ok);background:var(--ok)}
+  .banner{border-radius:10px;padding:12px;font-weight:700;margin-bottom:8px}
+  .b-green{background:var(--okbg);color:var(--ok);border:2px solid var(--ok)}
+  .b-red{background:var(--badbg);color:var(--bad);border:2px solid var(--bad)}
+  .b-orange{background:var(--warnbg);color:var(--warn);border:2px solid var(--warn)}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:15px}
+  .kv b{color:var(--mut);font-weight:500}
+  .big{font-size:22px;font-weight:700}
+  .palname{font-size:30px;font-weight:800;color:var(--pri)}
+  .thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .thumbs img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+  .toast{position:fixed;left:12px;right:12px;bottom:16px;padding:14px;border-radius:12px;color:#fff;font-weight:600;text-align:center;z-index:20}
+  .toast.ok{background:var(--ok)} .toast.err{background:var(--bad)} .toast.info{background:#333}
+  .list button{display:block;width:100%;text-align:left;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-top:8px;font-size:15px}
+  video{width:100%;border-radius:10px;background:#000}
+  .complet{font-weight:700;margin-top:8px}
+  .muted{color:var(--mut);font-size:14px}
+  .dest{margin-top:10px;font-weight:700;font-size:16px}
+  /* Liste imprimable */
+  #printSheet{overflow-x:auto}
+  #printSheet h1{font-size:34px;margin:0 0 4px}
+  #printSheet table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+  #printSheet th,#printSheet td{border:1px solid #999;padding:4px 5px;text-align:left;vertical-align:top}
+  #printSheet th{background:#eee}
+  @media print{
+    header,#connBanner,.noprint,.toast{display:none!important}
+    body{background:#fff} main{max-width:none;padding:0} .card{box-shadow:none;padding:0}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Audit lot Bizcom</h1>
+  <div class="who"><div id="hdrUser"></div><div id="hdrPal"></div><div id="hdrProg"></div></div>
+</header>
+<div id="connBanner" class="hidden"></div>
+<main>
+
+<!-- ═══ ÉCRAN 0 : RÉGLAGES ═══ -->
+<section id="scrSetup" class="hidden">
+  <div class="card">
+    <h2>Réglage du téléphone (une seule fois)</h2>
+    <label class="small">Clé Airtable (fournie par Michaël)</label>
+    <input id="inToken" type="password" autocomplete="off" placeholder="pat…">
+    <button class="btn sec" id="btnScanToken">Scanner le QR code de la clé</button>
+    <label class="small">Ton prénom</label>
+    <input id="inName" autocomplete="off" placeholder="Prénom">
+    <button class="btn" id="btnSaveSetup">Enregistrer</button>
+    <p class="muted">La clé reste dans ce téléphone. Elle ne donne accès qu'à la base d'audit du lot.</p>
+  </div>
+</section>
+
+<!-- ═══ ÉCRAN 1 : SAISIE ═══ -->
+<section id="scrInput" class="hidden">
+  <div class="card">
+    <h2>Ma palette en cours</h2>
+    <div class="palname" id="palName">—</div>
+    <div class="muted" id="palInfo">Aucune palette. Appuie sur « Nouvelle palette » avant de commencer.</div>
+    <div class="row">
+      <button class="btn" id="btnNewPal">Nouvelle palette</button>
+      <button class="btn sec" id="btnPrintMenu">Imprimer une liste</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Numéro de l'étiquette</h2>
+    <div id="display"></div>
+    <div class="pad" id="pad"></div>
+    <button class="btn" id="btnFind">Rechercher</button>
+    <div class="list" id="findResults"></div>
+  </div>
+  <div class="card">
+    <h2>Étiquette illisible ?</h2>
+    <div class="row"><input id="inSerial" placeholder="N° de série" autocomplete="off" autocapitalize="characters"></div>
+    <div class="row">
+      <button class="btn sec" id="btnScanSerial">📷 Scanner</button>
+      <button class="btn sec" id="btnFindSerial">Chercher</button>
+    </div>
+    <div class="list" id="serialResults"></div>
+  </div>
+  <div class="card">
+    <button class="btn sec" id="btnHors">Appareil absent du listing</button>
+    <button class="btn sec" id="btnChangeUser" style="margin-top:8px">Changer d'opérateur</button>
+  </div>
+</section>
+
+<!-- ═══ SCANNER (caméra) ═══ -->
+<section id="scrScan" class="hidden">
+  <div class="card">
+    <h2 id="scanTitle">Scanner</h2>
+    <video id="video" playsinline muted></video>
+    <button class="btn sec" id="btnScanCancel">Annuler</button>
+  </div>
+</section>
+
+<!-- ═══ ÉCRAN IMPRESSION ═══ -->
+<section id="scrPrint" class="hidden">
+  <div class="card noprint">
+    <h2>Imprimer la liste d'une palette</h2>
+    <div class="list" id="palList"></div>
+    <button class="btn sec" id="btnPrintBack">Retour</button>
+  </div>
+  <div class="card hidden" id="printSheet"></div>
+  <div class="noprint hidden" id="printBtns">
+    <button class="btn" id="btnDoPrint">🖨 Imprimer</button>
+    <button class="btn sec" id="btnPrintBack2">Retour à la liste</button>
+  </div>
+</section>
+
+<!-- ═══ ÉCRAN 2 : FICHE / AUDIT ═══ -->
+<section id="scrAudit" class="hidden">
+  <div id="banners"></div>
+  <div class="card">
+    <div class="big" id="fTitle"></div>
+    <div class="kv" id="fInfo" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card hidden" id="boxType">
+    <h2>Type d'appareil</h2>
+    <div class="choices" data-group="fam"></div>
+  </div>
+
+  <div class="card">
+    <h2 id="confQ">L'appareil correspond au listing ?</h2>
+    <div class="choices" data-group="conf">
+      <button class="choice" data-v="Conforme">Oui</button>
+      <button class="choice" data-v="Non conforme">Non</button>
+    </div>
+    <div id="boxNonConf" class="hidden">
+      <label class="small">Marque constatée</label><input id="inMarque">
+      <label class="small">Modèle constaté</label><input id="inModele">
+      <label class="small">N° de série constaté</label>
+      <div class="row"><input id="inSerieC" autocapitalize="characters"><button class="btn sec" style="margin-top:0;flex:0 0 70px" id="btnScanSerieC">📷</button></div>
+      <label class="small">Photo de la plaque signalétique</label>
+      <input type="file" accept="image/*" capture="environment" id="filePlaque">
+      <div class="thumbs" id="thPlaque"></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="boxChg">
+    <h2>Chargeur présent ?</h2>
+    <div class="choices" data-group="chg">
+      <button class="choice" data-v="Oui">Oui</button>
+      <button class="choice" data-v="Non">Non</button>
+    </div>
+    <p class="muted" id="chgNote"></p>
+  </div>
+
+  <div class="card" id="boxOn">
+    <h2>S'allume ?</h2>
+    <div class="choices" data-group="on">
+      <button class="choice" data-v="Oui">Oui</button>
+      <button class="choice" data-v="Partiellement">Partiel</button>
+      <button class="choice" data-v="Non">Non</button>
+    </div>
+  </div>
+
+  <div class="card" id="boxCtrl">
+    <h2 id="ctrlTitle">Contrôles</h2>
+    <div id="ctrlList"></div>
+  </div>
+
+  <div class="card hidden" id="boxBatt">
+    <h2>Batterie</h2>
+    <div class="choices" data-group="batt"></div>
+    <div id="battAlert" class="hidden">
+      <div class="banner b-red" style="margin-top:10px">⚠ BATTERIE DÉFECTUEUSE — à retirer et isoler (consigne sécurité)</div>
+      <label class="small">Photo de la batterie (obligatoire)</label>
+      <input type="file" accept="image/*" capture="environment" id="fileBatt">
+      <div class="thumbs" id="thBatt"></div>
+      <label class="check"><input type="checkbox" id="cbBattIsolee"> Batterie retirée et isolée</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Défauts constatés</h2>
+    <div class="choices" data-group="def" data-multi="1"></div>
+  </div>
+
+  <div class="card">
+    <h2>État esthétique</h2>
+    <div class="choices" data-group="etat">
+      <button class="choice" data-v="A">A</button><button class="choice" data-v="B">B</button>
+      <button class="choice" data-v="C">C</button><button class="choice" data-v="D">D</button>
+    </div>
+    <p class="muted">A comme neuf · B légères traces · C rayures/chocs visibles · D très abîmé</p>
+  </div>
+
+  <div class="card">
+    <h2>Accessoires présents</h2>
+    <div class="choices" data-group="acc" data-multi="1"></div>
+    <div class="complet" id="completTxt"></div>
+    <label class="small"><input type="checkbox" id="cbForceComplet" style="width:auto"> Corriger à la main : complet</label>
+  </div>
+
+  <div class="card">
+    <h2>Photos du défaut</h2>
+    <input type="file" accept="image/*" capture="environment" id="filePhotos" multiple>
+    <div class="thumbs" id="thPhotos"></div>
+    <label class="small">Commentaire</label>
+    <textarea id="inComment"></textarea>
+  </div>
+
+  <div class="card">
+    <h2>Décision</h2>
+    <div class="choices" data-group="dec">
+      <button class="choice" data-v="Garder">✅ Garder</button>
+      <button class="choice" data-v="Ne pas prendre">⛔ Ne pas prendre</button>
+      <button class="choice" data-v="">Laisser le calcul</button>
+    </div>
+    <div id="boxEnvie" class="hidden">
+      <label class="small">Palette Envie</label>
+      <div class="choices" id="envieList"></div>
+    </div>
+    <div class="dest" id="destTxt"></div>
+  </div>
+
+  <button class="btn ok" id="btnValidate">✔ Valider l'audit</button>
+  <button class="btn sec" id="btnCancel">Annuler (libérer la fiche)</button>
+  <div style="height:40px"></div>
+</section>
+
+</main>
+
+<script>
+'use strict';
+// ─── Constantes Airtable (IDs vérifiés le 14/10/2026) ───
+const BASE='appcCnZx0H4Dd9SM5', TABLE='tblQ9qckCqsh3fjwP', T_PAL='tblQnwMbuL0DOwXaU';
+const F={
+  nopro:'flds0je0wSxIldZiD', fiche:'fldy1xClptLbVxfNe', autresNopro:'fldN8gsSuqherWbis', doublon:'fldZWtAhIutzYqOdb',
+  enTrop:'fldyVQKNyYDaVxMCI', sinistre:'fldrtKBB3TF1mvQ24', palette:'fldWhYiOejXdyHYEy', marque:'fldNCvO6VSEF041x8',
+  modele:'fldIMddXD9Zpre3Fh', serie:'fldMJDMKvGhWLTgwf', statutSin:'fldA3dCmv7mXODtq6', achat:'fldEpsmEcnW0wKHmo',
+  type:'flddNKhvj1KpCaa7q', ident:'fldzSDYA1XlVwrciC', vigil:'fldy5LAbkvVDFlQUo', presel:'fldGgJrnDUyZFDkKs',
+  statut:'fldVeNQgiy9vncchT', conf:'fldIxUwILlVDot7yJ', on:'fld9PTJ8lS0fLqStf', def:'fldwgdwHKr9GPmlgq',
+  etat:'fldDZcYnVgjRHa9j2', acc:'fldwjEfB4r38zeypX', complet:'fldKERr0CvUv5tkEW', photos:'fldcRwpJKdOiGLJ5E',
+  plaque:'fldIzfzkUAthhJ6Kz', marqueC:'fldfrhr3Cc7o1MUQk', modeleC:'fldDujvvjMoHkbVmc', serieC:'fldOXU6ZGWK42ip28',
+  auditeur:'fldpGnuObnYli4mNa', verrou:'fld1518OOA6b7KluC', dateAudit:'fldMsatTgnMsF4bcJ', comment:'fldmrrhi5ckV840tU',
+  decMan:'fldEz36E4fhsFVTFN', decFin:'fldbmgsBdYOyMbNFm', ctrl:'fldeTLTWUBWvvEEiM',
+  newPal:'fldjGPoR36XwhT3Vg', batt:'fldUEKG9MeROzni0N', battIso:'fldsUH5GnwmcuwxKn', battPhoto:'fldz6TCOsx6Uc19hN',
+  chg:'fldphjFnVkuRATxEM', alerteBatt:'fldLoWtohpWsHeHx0'
+};
+const P={name:'flddx9aGs5t3aHvxe', auto:'fldVq6Rf8z2MjQXXY', type:'fldlBw7BMty1L9DzS', op:'fldJusT575HmtQP8n',
+  nb:'flda5INyY212C25G6', valeur:'fldEk6iTBfT5vxE1X'};
+
+// ─── Menus par famille d'appareil (validés par Michaël le 13/10/2026) ───
+const FAM={
+  console:{label:'Console',
+    ctrl:['Lecture d\'un disque OK ?','Manette reconnue ?','Mise à jour bloquée ?'],
+    def:['Pas d\'image','Pas de son','Lecteur disque HS','Surchauffe / ventilation','HDMI HS','Ventilation bruyante','Coque / châssis cassé','Compte verrouillé','Pièces manquantes','Autre']},
+  portable:{label:'PC portable',batt:true,
+    ctrl:['Démarre Windows ?','Mot de passe / BIOS verrouillé ?','Clavier et pavé tactile OK ?'],
+    def:['Écran cassé','Charnière cassée','Batterie HS','Ne charge pas','Clavier / boutons HS','Disque absent','Pas d\'image','Oxydation / liquide','Coque / châssis cassé','Compte verrouillé','Autre'],
+    acc:['Chargeur'],req:['Chargeur']},
+  fixe:{label:'PC fixe',
+    ctrl:['Démarre ?','Disque présent ?','Image en sortie ?'],
+    def:['Pas d\'image','Ne démarre pas','Alimentation HS','Surchauffe / ventilation','Disque absent','Coque / châssis cassé','Autre'],
+    acc:['Carte graphique présente','Câble alimentation'],req:['Carte graphique présente']},
+  aio:{label:'Tout-en-un',
+    ctrl:['Démarre ?','Disque présent ?','Écran OK ?'],
+    def:['Dalle cassée','Pas d\'image','Ne démarre pas','Alimentation HS','Disque absent','Coque / châssis cassé','Autre'],
+    acc:['Câble alimentation'],req:[]},
+  ecran:{label:'Écran',
+    ctrl:['Image OK ?','Pixels morts ?','Rétroéclairage OK ?'],
+    def:['Dalle cassée','Bandes / lignes','Pas d\'image','Pied manquant','Connectique HS','Autre'],
+    acc:['Pied','Câble alimentation'],req:['Pied']},
+  montre:{label:'Montre',batt:true,
+    ctrl:['Compte associé (iCloud / Samsung) ?','Écran tactile OK ?'],
+    def:['Écran fissuré','Dos soulevé (batterie gonflée)','Batterie HS','Ne charge pas','Bracelet manquant','Compte verrouillé','Autre'],
+    acc:['Chargeur','Bracelet'],req:['Chargeur']},
+  tablette:{label:'Tablette / liseuse',batt:true,
+    ctrl:['Compte associé ?','Tactile OK ?'],
+    def:['Écran cassé','Batterie HS','Ne charge pas','Compte verrouillé','Connectique HS','Autre'],
+    acc:['Chargeur'],req:['Chargeur']},
+  autre:{label:'Autre',batt:true,
+    ctrl:['Fonctionne ?'],
+    def:['Ne fonctionne pas','Casse','Pièces manquantes','Autre'],
+    acc:['Câble alimentation','Chargeur'],req:[]}
+};
+const TYPE2FAM={'Console':'console','PC portable':'portable','PC portable gaming':'portable','Tablette graphique':'portable',
+  'PC fixe':'fixe','Tout-en-un':'aio','Écran':'ecran','Montre':'montre','Tablette/2-en-1':'tablette','Liseuse':'tablette'};
+const FAM2TYPE={console:'Console',portable:'PC portable',fixe:'PC fixe',aio:'Tout-en-un',ecran:'Écran',montre:'Montre',tablette:'Tablette/2-en-1',autre:'Divers'};
+const CTRL_REP=['Oui','Non','Non testé'];
+const BATT_OPTS=['OK','Gonflée','Fuite / oxydée','Chauffe anormalement','Absente','Non testé'];
+const BATT_ALERT=['Gonflée','Fuite / oxydée','Chauffe anormalement'];
+const DOS_SOULEVE='Dos soulevé (batterie gonflée)';
+const LOCK_MIN=15;
+
+// ─── État ───
+const S={token:'',user:'',rec:null,sel:{},photos:[],plaque:[],battPhotos:[],required:[],creating:false,
+  pal:null,envies:[],envie:null};
+const $=id=>document.getElementById(id);
+const store={get:k=>{try{return localStorage.getItem(k)||''}catch(e){return''}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},
+  del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+
+// ─── Utilitaires ───
+function toast(msg,kind='info',ms=2600){const t=document.createElement('div');t.className='toast '+kind;t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),ms)}
+function show(id){['scrSetup','scrInput','scrScan','scrAudit','scrPrint'].forEach(s=>$(s).classList.toggle('hidden',s!==id));window.scrollTo(0,0)}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function val(v){if(v==null)return'';if(typeof v==='object'&&!Array.isArray(v))return v.name??'';return v}
+function fstr(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
+function setConn(ok,why){const b=$('connBanner');b.classList.toggle('hidden',ok);if(!ok)b.textContent='⚠ Pas de connexion à Airtable — '+why}
+
+// Appel Airtable. Erreur réseau ou réponse anormale → bandeau rouge (et jamais un faux « introuvable »)
+async function api(path,opt={},table=TABLE){
+  let r;
+  try{r=await fetch('https://api.airtable.com/v0/'+BASE+'/'+table+path,{...opt,headers:{'Authorization':'Bearer '+S.token,'Content-Type':'application/json'}})}
+  catch(e){setConn(false,'réseau coupé, ou page ouverte ailleurs que dans Chrome ('+e.message+')');throw new Error('conn')}
+  if(r.status===401||r.status===403){setConn(false,'clé refusée (refais le réglage)');throw new Error('auth')}
+  if(r.status===429){await new Promise(z=>setTimeout(z,1200));return api(path,opt,table)}
+  let j;try{j=await r.json()}catch(e){setConn(false,'réponse illisible (HTTP '+r.status+')');throw new Error('conn')}
+  if(!r.ok)throw new Error((j.error&&(j.error.message||j.error.type))||('HTTP '+r.status));
+  setConn(true);return j;
+}
+async function list(table,params){
+  const j=await api('?returnFieldsByFieldId=true&'+params,{},table);
+  if(!Array.isArray(j.records)){setConn(false,'réponse inattendue d\'Airtable');throw new Error('conn')}
+  return j;
+}
+async function listAll(table,params){let off='',out=[];do{const j=await list(table,params+(off?'&offset='+off:''));out.push(...j.records);off=j.offset||''}while(off);return out}
+async function findBy(formula,max=10){return (await list(TABLE,'maxRecords='+max+'&filterByFormula='+encodeURIComponent(formula))).records}
+async function getRec(id,table=TABLE){return api('/'+id+'?returnFieldsByFieldId=true',{},table)}
+// returnFieldsByFieldId : paramètre d'URL pour GET, mais paramètre du CORPS pour PATCH / POST (doc Airtable vérifiée 13/10/2026)
+async function patch(id,fields,table=TABLE){return api('/'+id,{method:'PATCH',body:JSON.stringify({fields,typecast:true,returnFieldsByFieldId:true})},table)}
+async function createRec(fields,table=TABLE){return api('',{method:'POST',body:JSON.stringify({fields,typecast:true,returnFieldsByFieldId:true})},table)}
+function showErr(e){if(!['auth','conn'].includes(e.message))toast('Erreur : '+e.message,'err',4500);else toast('Pas de connexion à Airtable','err',3000)}
+async function upload(recId,fieldId,file){
+  const b64=await new Promise((ok,ko)=>{const fr=new FileReader();fr.onload=()=>ok(String(fr.result).split(',')[1]);fr.onerror=ko;fr.readAsDataURL(file)});
+  let r;
+  try{r=await fetch('https://content.airtable.com/v0/'+BASE+'/'+recId+'/'+fieldId+'/uploadAttachment',{method:'POST',headers:{'Authorization':'Bearer '+S.token,'Content-Type':'application/json'},body:JSON.stringify({contentType:file.type||'image/jpeg',file:b64,filename:file.name||'photo.jpg'})})}
+  catch(e){setConn(false,'envoi photo impossible ('+e.message+')');throw new Error('conn')}
+  if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error((j.error&&j.error.message)||('Photo HTTP '+r.status))}
+}
+async function shrink(file){
+  try{
+    const bmp=await createImageBitmap(file);const k=Math.min(1,1600/Math.max(bmp.width,bmp.height));
+    const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+    c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+    const blob=await new Promise(ok=>c.toBlob(ok,'image/jpeg',0.8));
+    return new File([blob],(file.name||'photo').replace(/\.\w+$/,'')+'.jpg',{type:'image/jpeg'});
+  }catch(e){return file}
+}
+
+// ─── Réglages ───
+function initSetup(){
+  S.token=store.get('bz_token');S.user=store.get('bz_user');
+  const pid=store.get('bz_pal_id'),pn=store.get('bz_pal_name');if(pid)S.pal={id:pid,name:pn};
+  $('inToken').value=S.token;$('inName').value=S.user;
+  if(S.token&&S.user){goInput()}else show('scrSetup');
+}
+$('btnSaveSetup').onclick=()=>{
+  const t=$('inToken').value.trim(),n=$('inName').value.trim();
+  if(!t||!n){toast('Clé et prénom obligatoires','err');return}
+  S.token=t;S.user=n;store.set('bz_token',t);store.set('bz_user',n);goInput();
+};
+$('btnChangeUser').onclick=()=>show('scrSetup');
+$('btnScanToken').onclick=()=>scan(['qr_code'],'Scanner le QR code de la clé',v=>{$('inToken').value=v;show('scrSetup')},()=>show('scrSetup'));
+
+// ─── Palettes ───
+function renderPal(nb){
+  $('palName').textContent=S.pal?S.pal.name:'—';
+  $('hdrPal').textContent=S.pal?'Palette '+S.pal.name:'';
+  $('palInfo').textContent=S.pal?(nb!=null?nb+' appareil(s) sur cette palette':'Les appareils audités (non gardés) vont sur cette palette.')
+    :'Aucune palette. Appuie sur « Nouvelle palette » avant de commencer.';
+}
+async function refreshPal(){
+  if(!S.pal)return renderPal();
+  try{const r=await getRec(S.pal.id,T_PAL);S.pal.name=r.fields[P.name]||S.pal.name;store.set('bz_pal_name',S.pal.name);renderPal(r.fields[P.nb]||0)}
+  catch(e){renderPal()}
+}
+$('btnNewPal').onclick=async()=>{
+  if(S.pal&&!confirm(`Clôturer la palette ${S.pal.name} et en commencer une nouvelle ?`))return;
+  const b=$('btnNewPal');b.disabled=true;
+  try{
+    // Le numéro vient du Numéro auto d'Airtable → unique même si 4 téléphones appuient en même temps
+    const r=await createRec({[P.type]:'Lot',[P.op]:S.user},T_PAL);
+    const name='P-'+String(r.fields[P.auto]).padStart(3,'0');
+    await patch(r.id,{[P.name]:name},T_PAL);
+    S.pal={id:r.id,name};store.set('bz_pal_id',r.id);store.set('bz_pal_name',name);
+    renderPal(0);toast('Nouvelle palette '+name,'ok');
+  }catch(e){showErr(e)}finally{b.disabled=false}
+};
+async function loadEnvies(){
+  const recs=await listAll(T_PAL,'filterByFormula='+encodeURIComponent("{Type}='Envie'")+'&sort%5B0%5D%5Bfield%5D=Num%C3%A9ro%20auto');
+  S.envies=recs.map(r=>({id:r.id,name:r.fields[P.name]||'Envie ?'}));
+}
+async function newEnvie(){
+  const nums=S.envies.map(e=>parseInt(String(e.name).replace(/\D/g,''),10)).filter(n=>!isNaN(n));
+  const name='Envie '+((nums.length?Math.max(...nums):0)+1);
+  if(!confirm(`Créer la palette « ${name} » ?`))return;
+  try{const r=await createRec({[P.type]:'Envie',[P.op]:S.user,[P.name]:name},T_PAL);
+    S.envies.push({id:r.id,name});S.envie=r.id;store.set('bz_envie',r.id);renderEnvies();toast(name+' créée','ok')}
+  catch(e){showErr(e)}
+}
+function renderEnvies(){
+  const box=$('envieList');box.innerHTML='';
+  S.envies.forEach(e=>{const b=document.createElement('button');b.className='choice envie'+(S.envie===e.id?' on':'');b.textContent=e.name;
+    b.onclick=()=>{S.envie=e.id;store.set('bz_envie',e.id);renderEnvies()};box.appendChild(b)});
+  const n=document.createElement('button');n.className='choice';n.textContent='+ Nouvelle palette Envie';n.onclick=newEnvie;box.appendChild(n);
+  updateDest();
+}
+function updateDest(){
+  const garder=S.sel.dec==='Garder';
+  $('boxEnvie').classList.toggle('hidden',!garder);
+  const env=S.envies.find(e=>e.id===S.envie);
+  $('destTxt').innerHTML=garder?(env?`→ va sur <span style="color:var(--ok)">${esc(env.name)}</span>`:'<span style="color:var(--bad)">→ choisis la palette Envie</span>')
+    :(S.pal?`→ va sur la palette ${esc(S.pal.name)}`:'<span style="color:var(--bad)">→ aucune palette en cours : crée-la depuis l\'écran d\'accueil</span>');
+}
+
+// ─── Saisie du numéro ───
+let code='';
+function renderPad(){
+  const p=$('pad');p.innerHTML='';
+  ['1','2','3','4','5','6','7','8','9','⌫','0','C'].forEach(k=>{const b=document.createElement('button');b.textContent=k;if(k==='⌫'||k==='C')b.className='act';
+    b.onclick=()=>{if(k==='⌫')code=code.slice(0,-1);else if(k==='C')code='';else if(code.length<8)code+=k;$('display').textContent=code};p.appendChild(b)});
+}
+function goInput(){
+  $('hdrUser').textContent=S.user;code='';$('display').textContent='';$('inSerial').value='';$('serialResults').innerHTML='';$('findResults').innerHTML='';
+  show('scrInput');renderPal();refreshPal();refreshProgress();
+}
+$('btnFind').onclick=async()=>{
+  if(code.length<4){toast('Numéro trop court','err');return}
+  $('btnFind').disabled=true;$('findResults').innerHTML='';
+  try{
+    const c=fstr(code);
+    const recs=await findBy(`OR({NOPROFORMA}='${c}',{Autres NOPROFORMA (doublons)}&''='${c}',{N° de fiche}&''='${c}')`,10);
+    if(!recs.length){toast('Numéro introuvable (ni NOPROFORMA, ni n° de fiche) — cherche par n° de série','err',4500);return}
+    const how=r=>{const f=r.fields;if(String(f[F.nopro])===code)return'NOPROFORMA';if(String(f[F.fiche])===code)return'N° de fiche';return'NOPROFORMA (doublon)'};
+    if(recs.length===1){openRec(recs[0],how(recs[0])==='NOPROFORMA (doublon)');return}
+    const box=$('findResults');
+    box.innerHTML='<p class="banner b-orange" style="margin-top:10px">Plusieurs appareils ont ce numéro. Lequel as-tu en main ?</p>';
+    recs.forEach(r=>{const f=r.fields,b=document.createElement('button');
+      b.innerHTML=`<b>${esc(val(f[F.marque]))} ${esc(f[F.modele])}</b><br><span class="muted">${esc(code)} = ${how(r)} · série ${esc(f[F.serie]||'—')} · palette ${esc(f[F.palette]??'—')}</span>`;
+      b.onclick=()=>openRec(r,how(r)==='NOPROFORMA (doublon)');box.appendChild(b)});
+  }catch(e){showErr(e)}
+  finally{$('btnFind').disabled=false}
+};
+$('btnFindSerial').onclick=()=>searchSerial($('inSerial').value.trim());
+$('btnScanSerial').onclick=()=>scan(null,'Scanner le n° de série',v=>{$('inSerial').value=v;show('scrInput');searchSerial(v)},()=>show('scrInput'));
+async function searchSerial(s){
+  const box=$('serialResults');box.innerHTML='';
+  if(s.length<4){toast('Saisis au moins 4 caractères','err');return}
+  try{
+    const recs=await findBy(`OR(FIND(UPPER('${fstr(s)}'),UPPER({N° série}&'')),FIND(UPPER('${fstr(s)}'),UPPER({Série constatée}&'')))`,10);
+    if(!recs.length){box.innerHTML='<p class="muted">Aucun appareil trouvé. S\'il n\'est pas dans le listing, utilise « Appareil absent du listing ».</p>';return}
+    recs.forEach(r=>{const b=document.createElement('button');const f=r.fields;
+      b.innerHTML=`<b>${esc(f[F.nopro])}</b> — ${esc(val(f[F.marque]))} ${esc(f[F.modele])}<br><span class="muted">${esc(f[F.serie])}</span>`;
+      b.onclick=()=>openRec(r,false);box.appendChild(b)});
+  }catch(e){showErr(e)}
+}
+$('btnHors').onclick=()=>{S.creating=true;openRec({id:null,fields:{[F.nopro]:code||'',[F.conf]:'Hors listing'}},false)};
+
+// ─── Scanner (BarcodeDetector, Chrome Android) ───
+let scanStream=null,scanTimer=null;
+async function scan(formats,title,onOk,onCancel){
+  if(!('BarcodeDetector' in window)){toast('Scan non disponible sur ce téléphone — saisis à la main','err',4000);return}
+  $('scanTitle').textContent=title;show('scrScan');
+  try{
+    const det=formats?new BarcodeDetector({formats}):new BarcodeDetector();
+    scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=$('video');v.srcObject=scanStream;await v.play();
+    const stop=()=>{clearInterval(scanTimer);if(scanStream)scanStream.getTracks().forEach(t=>t.stop());scanStream=null};
+    $('btnScanCancel').onclick=()=>{stop();onCancel()};
+    scanTimer=setInterval(async()=>{try{const c=await det.detect(v);if(c.length){stop();if(navigator.vibrate)navigator.vibrate(80);onOk(c[0].rawValue.trim())}}catch(e){}},300);
+  }catch(e){toast('Caméra indisponible : '+e.message,'err',4000);onCancel()}
+}
+
+// ─── Ouverture d'une fiche (verrou) ───
+async function openRec(r,viaDbl){
+  try{
+    if(r.id){
+      r=await getRec(r.id);const f=r.fields;
+      const st=val(f[F.statut]),who=f[F.auditeur]||'',since=f[F.verrou]?new Date(f[F.verrou]):null;
+      const fresh=since&&(Date.now()-since.getTime())<LOCK_MIN*60000;
+      if(st==='En cours'&&fresh&&who&&who!==S.user){
+        if(!confirm(`${who} audite déjà cet appareil (depuis ${since.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}).\nLe prendre quand même ?`))return;
+      }
+      if(st==='Terminé'&&!confirm(`Déjà audité par ${who||'?'}${f[F.dateAudit]?' le '+new Date(f[F.dateAudit]).toLocaleString('fr-FR'):''}.\nModifier l'audit ?`))return;
+      await patch(r.id,{[F.statut]:'En cours',[F.auditeur]:S.user,[F.verrou]:new Date().toISOString()});
+      r=await getRec(r.id);r.prevStatut=st||null;
+    }
+    await loadEnvies();
+    S.rec=r;S.creating=!r.id;fillAudit(viaDbl);show('scrAudit');
+  }catch(e){showErr(e)}
+}
+
+// ─── Menu selon la famille d'appareil ───
+function famOf(f){if(S.creating)return S.fam||'autre';return TYPE2FAM[val(f[F.type])]||'autre'}
+function menuFor(f){
+  const fam=famOf(f),m=String(val(f[F.marque])).toUpperCase(),base=FAM[fam];
+  let acc=base.acc||[],req=base.req||[],batt=!!base.batt;
+  if(fam==='console'){
+    if(m==='NINTENDO'){acc=['2 Joy-Con','Dock','Chargeur','Câble HDMI'];req=acc;batt=true}
+    else if(m==='MICROSOFT'){acc=['Manette','Câble alimentation','Câble HDMI'];req=acc}
+    else if(m==='ASUS'){acc=['Chargeur'];req=acc;batt=true}
+    else{acc=['Manette','Câble alimentation','Câble HDMI','Socle'];req=acc}
+  }
+  return {fam,label:base.label,ctrl:base.ctrl,def:base.def,acc,req,batt};
+}
+function parseCtrl(txt){const o={};String(txt||'').split('\n').forEach(l=>{const i=l.lastIndexOf(' : ');if(i>0)o[l.slice(0,i).trim()]=l.slice(i+3).trim()});return o}
+const montreSansChargeur=()=>S.menu&&S.menu.fam==='montre'&&S.sel.chg==='Non';
+const battAlert=()=>BATT_ALERT.includes(S.sel.batt);
+
+// ─── Remplissage du formulaire ───
+function fillAudit(viaDbl){
+  const f=S.rec.fields,presel=val(f[F.presel]);
+  const dm=val(f[F.decMan]);
+  S.sel={conf:val(f[F.conf])||null,on:val(f[F.on])||null,etat:val(f[F.etat])||null,
+         dec:dm||(presel==='Garder si complet'?'Garder':''),      // ligne verte → Garder pré-coché
+         chg:val(f[F.chg])||null,batt:val(f[F.batt])||null,
+         def:new Set((f[F.def]||[]).map(val)),acc:new Set((f[F.acc]||[]).map(val))};
+  S.ctrl=parseCtrl(f[F.ctrl]);
+  S.photos=[];S.plaque=[];S.battPhotos=[];S.hadBattPhoto=!!(f[F.battPhoto]&&f[F.battPhoto].length);
+  if(S.creating)S.fam=null;
+  // palette Envie : celle déjà liée à l'appareil, sinon la dernière choisie sur ce téléphone
+  const linked=(f[F.newPal]||[]).map(x=>x.id||x);
+  const envLinked=S.envies.find(e=>linked.includes(e.id));
+  const last=store.get('bz_envie');
+  S.envie=envLinked?envLinked.id:(S.envies.some(e=>e.id===last)?last:null);
+  // Bandeaux
+  const B=[];
+  if(S.creating)B.push(['b-red','APPAREIL HORS LISTING — choisis le type, puis renseigne marque, modèle, n° de série et photo de la plaque']);
+  if(presel==='Garder si complet')B.push(['b-green','✅ LIGNE VERTE — à garder (sauf si tu choisis « Ne pas prendre »)']);
+  if(dm==='Garder')B.push(['b-green','✅ Décision enregistrée : GARDER']);if(dm==='Ne pas prendre')B.push(['b-red','⛔ Décision enregistrée : NE PAS PRENDRE']);
+  if(f[F.doublon]||viaDbl)B.push(['b-red','⚠ Doublon dans l\'offre Bizcom'+(viaDbl?' — ce NOPROFORMA renvoie vers cette fiche':'')]);
+  if(S.sel.conf==='Non conforme')B.push(['b-orange','Déjà signalé non conforme au listing']);
+  if(val(f[F.alerteBatt]))B.push(['b-red','⚠ Batterie défectueuse déjà signalée']);
+  $('banners').innerHTML=B.map(b=>`<div class="banner ${b[0]}">${esc(b[1])}</div>`).join('');
+  $('fTitle').textContent=S.creating?'Nouvel appareil':(f[F.nopro]+' — '+val(f[F.marque])+' '+(f[F.modele]||''));
+  const info=S.creating?[]:[['Type',val(f[F.type])],['Identification',val(f[F.ident])],['N° série',f[F.serie]],['Palette origine',f[F.palette]],['N° fiche',f[F.fiche]],['Statut sinistre',val(f[F.statutSin])],['Vigilance',val(f[F.vigil])]];
+  $('fInfo').innerHTML=info.filter(x=>x[1]!==''&&x[1]!=null).map(x=>`<b>${esc(x[0])}</b><span>${esc(x[1])}</span>`).join('');
+  $('boxType').classList.toggle('hidden',!S.creating);
+  if(S.creating){const box=document.querySelector('[data-group="fam"]');box.innerHTML='';
+    Object.entries(FAM).forEach(([k,v])=>{const b=document.createElement('button');b.className='choice';b.dataset.v=k;b.textContent=v.label;box.appendChild(b)})}
+  if(S.creating)S.sel.conf='Non conforme';
+  $('confQ').textContent=S.creating?'Identification de l\'appareil':'L\'appareil correspond au listing ?';
+  document.querySelector('[data-group="conf"]').classList.toggle('hidden',S.creating);
+  $('inMarque').value=f[F.marqueC]||'';$('inModele').value=f[F.modeleC]||'';$('inSerieC').value=f[F.serieC]||'';
+  $('inComment').value=f[F.comment]||'';['thPhotos','thPlaque','thBatt'].forEach(i=>$(i).innerHTML='');
+  ['filePhotos','filePlaque','fileBatt'].forEach(i=>$(i).value='');
+  $('cbForceComplet').checked=false;$('cbBattIsolee').checked=!!f[F.battIso];
+  rebuildMenus();toggleNonConf();renderEnvies();
+}
+function rebuildMenus(){
+  const M=menuFor(S.rec.fields);S.menu=M;S.required=M.req;
+  // Montres : question chargeur
+  $('boxChg').classList.toggle('hidden',M.fam!=='montre');
+  if(M.fam!=='montre')S.sel.chg=null;
+  // Contrôles
+  $('ctrlTitle').textContent='Contrôles — '+M.label;
+  const cl=$('ctrlList');cl.innerHTML='';
+  M.ctrl.forEach(q=>{const w=document.createElement('div');w.style.marginBottom='10px';
+    w.innerHTML=`<div style="font-weight:600;margin-bottom:6px">${esc(q)}</div>`;
+    const box=document.createElement('div');box.className='choices';box.dataset.group='ctrl';box.dataset.q=q;
+    CTRL_REP.forEach(r=>{const b=document.createElement('button');b.className='choice'+(S.ctrl[q]===r?' on':'');b.dataset.v=r;b.textContent=r;box.appendChild(b)});
+    w.appendChild(box);cl.appendChild(w)});
+  // Batterie
+  $('boxBatt').classList.toggle('hidden',!M.batt);
+  const opts=M.fam==='autre'?[...BATT_OPTS,'Pas de batterie']:BATT_OPTS;
+  const bb=document.querySelector('[data-group="batt"]');bb.innerHTML='';
+  opts.forEach(o=>{const b=document.createElement('button');b.className='choice'+(BATT_ALERT.includes(o)?' danger':'');b.dataset.v=o;b.textContent=o;bb.appendChild(b)});
+  buildChoices('def',[...new Set([...M.def,...S.sel.def])]);
+  buildChoices('acc',[...new Set([...M.acc,...S.sel.acc])]);
+  applyMontre();refreshSingles();updateComplet();updateBatt();
+}
+// Montre sans chargeur : pas de test, contrôle visuel seulement
+function applyMontre(){
+  const sans=montreSansChargeur();
+  $('boxOn').classList.toggle('hidden',sans);
+  $('boxCtrl').classList.toggle('hidden',sans);
+  $('chgNote').textContent=sans?'Pas de test : contrôle visuel seulement (écran, dos soulevé, bracelet, état).':'';
+  if(sans){S.sel.on='Non testé';if(!S.sel.batt)S.sel.batt='Non testé';S.sel.acc.delete('Chargeur')}
+  else if(S.sel.on==='Non testé')S.sel.on=null;
+  if(S.menu.fam==='montre'&&S.sel.chg==='Oui')S.sel.acc.add('Chargeur');
+  document.querySelectorAll('[data-group="acc"] .choice').forEach(b=>b.classList.toggle('on',S.sel.acc.has(b.dataset.v)));
+}
+function refreshSingles(){['conf','on','etat','dec','chg','batt'].forEach(g=>document.querySelectorAll(`[data-group="${g}"] .choice`).forEach(b=>b.classList.toggle('on',b.dataset.v===S.sel[g])))}
+function updateBatt(){$('battAlert').classList.toggle('hidden',!battAlert())}
+function buildChoices(g,list){
+  const box=document.querySelector(`[data-group="${g}"]`);box.innerHTML='';
+  list.forEach(v=>{const b=document.createElement('button');b.className='choice';b.dataset.v=v;b.textContent=v;
+    if(g==='acc'&&S.required.includes(v))b.classList.add('req');
+    if(S.sel[g].has(v))b.classList.add('on');box.appendChild(b)});
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('.choice');if(!b)return;
+  const box=b.parentElement,g=box.dataset.group,multi=box.dataset.multi;if(!g)return;
+  if(g==='ctrl'){const q=box.dataset.q;S.ctrl[q]=S.ctrl[q]===b.dataset.v?undefined:b.dataset.v;
+    box.querySelectorAll('.choice').forEach(x=>x.classList.toggle('on',x.dataset.v===S.ctrl[q]));return}
+  if(g==='fam'){S.fam=b.dataset.v;box.querySelectorAll('.choice').forEach(x=>x.classList.toggle('on',x===b));rebuildMenus();return}
+  if(multi){S.sel[g].has(b.dataset.v)?S.sel[g].delete(b.dataset.v):S.sel[g].add(b.dataset.v);b.classList.toggle('on')}
+  else{S.sel[g]=b.dataset.v;box.querySelectorAll('.choice').forEach(x=>x.classList.toggle('on',x===b))}
+  if(g==='def'&&b.dataset.v===DOS_SOULEVE&&S.sel.def.has(DOS_SOULEVE)){S.sel.batt='Gonflée';refreshSingles();updateBatt();toast('Dos soulevé → batterie gonflée : à retirer et isoler','err',3500)}
+  if(g==='conf')toggleNonConf();if(g==='acc')updateComplet();
+  if(g==='chg'){applyMontre();refreshSingles();updateComplet()}
+  if(g==='batt')updateBatt();
+  if(g==='dec')updateDest();
+});
+function toggleNonConf(){$('boxNonConf').classList.toggle('hidden',S.sel.conf!=='Non conforme')}
+function isComplet(){return $('cbForceComplet').checked||S.required.every(a=>S.sel.acc.has(a))}
+function updateComplet(){
+  const miss=S.required.filter(a=>!S.sel.acc.has(a));
+  $('completTxt').innerHTML=!S.required.length?'<span class="muted">Pas d\'accessoire obligatoire pour cette famille → complet</span>'
+    :miss.length?`<span style="color:var(--bad)">Incomplet — manque : ${esc(miss.join(', '))}</span>`:'<span style="color:var(--ok)">Complet ✔</span>';
+}
+$('cbForceComplet').onchange=updateComplet;
+$('btnScanSerieC').onclick=()=>scan(null,'Scanner le n° de série',v=>{$('inSerieC').value=v;show('scrAudit')},()=>show('scrAudit'));
+
+// Photos
+async function addPhotos(input,arr,th){
+  for(const f of input.files){const s=await shrink(f);arr.push(s);const i=document.createElement('img');i.src=URL.createObjectURL(s);th.appendChild(i)}
+  input.value='';
+}
+$('filePhotos').onchange=e=>addPhotos(e.target,S.photos,$('thPhotos'));
+$('filePlaque').onchange=e=>addPhotos(e.target,S.plaque,$('thPlaque'));
+$('fileBatt').onchange=e=>addPhotos(e.target,S.battPhotos,$('thBatt'));
+
+// ─── Validation ───
+$('btnValidate').onclick=async()=>{
+  const s=S.sel,M=S.menu,garder=s.dec==='Garder';
+  if(S.creating&&!S.fam){toast('Choisis le type d\'appareil','err');return}
+  if(!s.conf){toast('Réponds : correspond au listing ?','err');return}
+  if(M.fam==='montre'&&!s.chg){toast('Réponds : chargeur présent ?','err');return}
+  if(!s.on){toast('Réponds : s\'allume ?','err');return}
+  if(M.batt&&!s.batt){toast('Indique l\'état de la batterie','err');return}
+  if(battAlert()&&!S.battPhotos.length&&!S.hadBattPhoto){toast('Photo de la batterie obligatoire','err');return}
+  if(battAlert()&&!$('cbBattIsolee').checked){toast('Coche « Batterie retirée et isolée »','err');return}
+  if(!s.etat){toast('Choisis l\'état esthétique','err');return}
+  if(s.conf==='Non conforme'&&!$('inMarque').value.trim()&&!$('inModele').value.trim()){toast('Indique la marque ou le modèle constaté','err');return}
+  if(S.creating&&!$('inSerieC').value.trim()&&!S.plaque.length){toast('N° de série ou photo de plaque obligatoire','err');return}
+  if(garder&&!S.envie){toast('Choisis la palette Envie','err');return}
+  if(!garder&&!S.pal){toast('Aucune palette en cours : reviens à l\'accueil et appuie sur « Nouvelle palette »','err',4500);return}
+  const destId=garder?S.envie:S.pal.id,destName=garder?(S.envies.find(e=>e.id===S.envie)||{}).name:S.pal.name;
+  const btn=$('btnValidate');btn.disabled=true;btn.textContent='Enregistrement…';
+  try{
+    const fields={
+      [F.statut]:'Terminé',[F.conf]:S.creating?'Hors listing':s.conf,[F.on]:s.on,[F.etat]:s.etat,
+      [F.def]:[...s.def],[F.acc]:[...s.acc],[F.complet]:isComplet(),
+      [F.marqueC]:$('inMarque').value.trim()||null,[F.modeleC]:$('inModele').value.trim()||null,[F.serieC]:$('inSerieC').value.trim()||null,
+      [F.auditeur]:S.user,[F.dateAudit]:new Date().toISOString(),[F.verrou]:null,[F.comment]:$('inComment').value.trim()||null,
+      [F.ctrl]:montreSansChargeur()?null:(M.ctrl.filter(q=>S.ctrl[q]).map(q=>q+' : '+S.ctrl[q]).join('\n')||null),
+      [F.decMan]:s.dec||null,[F.newPal]:[destId],
+      [F.chg]:M.fam==='montre'?s.chg:null,
+      [F.batt]:M.batt?s.batt:null,[F.battIso]:battAlert()?$('cbBattIsolee').checked:false
+    };
+    let rec;
+    if(S.creating){
+      fields[F.nopro]=code||('HL-'+new Date().toISOString().slice(0,16).replace(/\D/g,''));
+      fields[F.presel]='Non';fields[F.type]=FAM2TYPE[S.fam||'autre'];
+      rec=await createRec(fields);
+    }else rec=await patch(S.rec.id,fields);
+    const all=[...S.photos.map(p=>[F.photos,p]),...S.plaque.map(p=>[F.plaque,p]),...S.battPhotos.map(p=>[F.battPhoto,p])];
+    for(let i=0;i<all.length;i++){btn.textContent=`Photo ${i+1}/${all.length}…`;await upload(rec.id,all[i][0],all[i][1])}
+    const dec=(await getRec(rec.id)).fields[F.decFin]||'';
+    toast(`Enregistré → ${destName}`+(dec?' · '+dec:''),garder?'ok':'info',3500);
+    goInput();
+  }catch(e){showErr(e);if(e.message!=='auth'&&e.message!=='conn')toast('Rien n\'est perdu, réessaie','err',3000)}
+  finally{btn.disabled=false;btn.textContent='✔ Valider l\'audit'}
+};
+$('btnCancel').onclick=async()=>{
+  if(S.rec&&S.rec.id){try{await patch(S.rec.id,{[F.statut]:S.rec.prevStatut||null,[F.verrou]:null})}catch(e){}}
+  goInput();
+};
+
+// ─── Impression des listes de palette ───
+$('btnPrintMenu').onclick=async()=>{
+  show('scrPrint');$('printSheet').classList.add('hidden');$('printBtns').classList.add('hidden');$('palList').parentElement.classList.remove('hidden');
+  const box=$('palList');box.innerHTML='<p class="muted">Chargement…</p>';
+  try{
+    const recs=await listAll(T_PAL,'sort%5B0%5D%5Bfield%5D=Type&sort%5B1%5D%5Bfield%5D=Num%C3%A9ro%20auto');
+    box.innerHTML=recs.length?'':'<p class="muted">Aucune palette créée pour l\'instant.</p>';
+    recs.forEach(r=>{const f=r.fields,b=document.createElement('button');
+      b.innerHTML=`<b>${esc(f[P.name]||'?')}</b> — ${f[P.nb]||0} appareil(s)<br><span class="muted">${esc(val(f[P.type]))} · créée par ${esc(f[P.op]||'?')}</span>`;
+      b.onclick=()=>printPal(f[P.name]);box.appendChild(b)});
+  }catch(e){box.innerHTML='';showErr(e)}
+};
+async function printPal(name){
+  try{
+    const recs=await listAll(TABLE,'filterByFormula='+encodeURIComponent(`FIND('|${fstr(name)}|','|'&ARRAYJOIN({Nouvelle palette},'|')&'|')`)
+      +'&sort%5B0%5D%5Bfield%5D=Marque&sort%5B1%5D%5Bfield%5D=Mod%C3%A8le');
+    const tot=recs.reduce((a,r)=>a+(Number(r.fields[F.achat])||0),0);
+    const rows=recs.map((r,i)=>{const f=r.fields;return `<tr><td>${i+1}</td><td>${esc(f[F.nopro])}</td><td>${esc(f[F.fiche])}</td><td>${esc(val(f[F.marque]))}</td><td>${esc(f[F.modele])}</td><td>${esc(f[F.serie]||f[F.serieC]||'')}</td><td>${esc(f[F.palette]??'')}</td><td>${esc(val(f[F.decFin]))}${val(f[F.alerteBatt])?' · ⚠ batterie retirée':''}</td></tr>`}).join('');
+    $('printSheet').innerHTML=`<h1>Palette ${esc(name)}</h1>
+      <div><b>${recs.length} appareil(s)</b> · valeur d'achat ${tot.toLocaleString('fr-FR',{style:'currency',currency:'EUR'})} · imprimé le ${new Date().toLocaleString('fr-FR')} par ${esc(S.user)}</div>
+      <table><thead><tr><th>#</th><th>NOPROFORMA</th><th>N° fiche</th><th>Marque</th><th>Modèle</th><th>N° série</th><th>Pal. origine</th><th>Décision</th></tr></thead><tbody>${rows}</tbody></table>`;
+    $('printSheet').classList.remove('hidden');$('printBtns').classList.remove('hidden');$('palList').parentElement.classList.add('hidden');
+  }catch(e){showErr(e)}
+}
+$('btnDoPrint').onclick=()=>window.print();
+$('btnPrintBack').onclick=()=>goInput();
+$('btnPrintBack2').onclick=()=>{$('palList').parentElement.classList.remove('hidden');$('printSheet').classList.add('hidden');$('printBtns').classList.add('hidden')};
+
+// ─── Avancement (toutes les 2 min) ───
+let progBusy=false;
+async function refreshProgress(){
+  if(progBusy||!S.token)return;progBusy=true;
+  try{
+    const recs=await listAll(TABLE,'pageSize=100&fields%5B%5D='+F.statut);
+    $('hdrProg').textContent=`${recs.filter(r=>val(r.fields[F.statut])==='Terminé').length} / ${recs.length} audités`;
+  }catch(e){$('hdrProg').textContent=''}finally{progBusy=false}
+}
+setInterval(refreshProgress,120000);
+
+renderPad();initSetup();
+</script>
+</body>
+</html>

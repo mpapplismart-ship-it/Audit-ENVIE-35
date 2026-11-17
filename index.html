@@ -5,6 +5,9 @@
   v1.5 — 17/11/2026
   - PALETTES : bouton « Choisir une palette » → liste des palettes Lot (nb d'appareils, créateur) ; plusieurs
     téléphones peuvent remplir la même P-xxx. « Nouvelle palette » ne parle plus de clôture.
+  - DÉMONTÉ : case « Appareil démonté » → S'allume = Non testé, pas de contrôles, défaut « Appareil démonté », photo obligatoire.
+  - GARDÉ : photo de la plaque signalétique obligatoire (enregistrement atelier).
+  - DÉCISION : pré-réglée sur « Ne pas prendre » si la présélection n'est pas « Garder si complet ».
   v1.4 — 14/10/2026
   - PALETTES : bouton « Nouvelle palette » → crée une ligne dans la table Palettes (tblQnwMbuL0DOwXaU) ; le numéro
     P-xxx vient du Numéro auto d'Airtable → jamais deux fois le même numéro, même avec 4 téléphones.
@@ -197,10 +200,12 @@
       <label class="small">Modèle constaté</label><input id="inModele">
       <label class="small">N° de série constaté</label>
       <div class="row"><input id="inSerieC" autocapitalize="characters"><button class="btn sec" style="margin-top:0;flex:0 0 70px" id="btnScanSerieC">📷</button></div>
-      <label class="small">Photo de la plaque signalétique</label>
-      <input type="file" accept="image/*" capture="environment" id="filePlaque">
-      <div class="thumbs" id="thPlaque"></div>
     </div>
+  </div>
+
+  <div class="card">
+    <label class="check" style="margin-top:0"><input type="checkbox" id="cbDemonte"> Appareil démonté (pas de test)</label>
+    <p class="muted" id="demNote"></p>
   </div>
 
   <div class="card hidden" id="boxChg">
@@ -278,6 +283,11 @@
       <label class="small">Palette Envie</label>
       <div class="choices" id="envieList"></div>
     </div>
+    <div id="boxPlaque" class="hidden">
+      <label class="small" id="plaqueLbl">Photo de la plaque signalétique</label>
+      <input type="file" accept="image/*" capture="environment" id="filePlaque">
+      <div class="thumbs" id="thPlaque"></div>
+    </div>
     <div class="dest" id="destTxt"></div>
   </div>
 
@@ -349,6 +359,7 @@ const CTRL_REP=['Oui','Non','Non testé'];
 const BATT_OPTS=['OK','Gonflée','Fuite / oxydée','Chauffe anormalement','Absente','Non testé'];
 const BATT_ALERT=['Gonflée','Fuite / oxydée','Chauffe anormalement'];
 const DOS_SOULEVE='Dos soulevé (batterie gonflée)';
+const DEMONTE='Appareil démonté';
 const LOCK_MIN=15;
 
 // ─── État ───
@@ -483,6 +494,7 @@ function renderEnvies(){
 function updateDest(){
   const garder=S.sel.dec==='Garder';
   $('boxEnvie').classList.toggle('hidden',!garder);
+  togglePlaque();
   const env=S.envies.find(e=>e.id===S.envie);
   $('destTxt').innerHTML=garder?(env?`→ va sur <span style="color:var(--ok)">${esc(env.name)}</span>`:'<span style="color:var(--bad)">→ choisis la palette Envie</span>')
     :(S.pal?`→ va sur la palette ${esc(S.pal.name)}`:'<span style="color:var(--bad)">→ aucune palette en cours : crée-la depuis l\'écran d\'accueil</span>');
@@ -580,6 +592,7 @@ function menuFor(f){
 }
 function parseCtrl(txt){const o={};String(txt||'').split('\n').forEach(l=>{const i=l.lastIndexOf(' : ');if(i>0)o[l.slice(0,i).trim()]=l.slice(i+3).trim()});return o}
 const montreSansChargeur=()=>S.menu&&S.menu.fam==='montre'&&S.sel.chg==='Non';
+const sansTest=()=>montreSansChargeur()||S.sel.def.has(DEMONTE);
 const battAlert=()=>BATT_ALERT.includes(S.sel.batt);
 
 // ─── Remplissage du formulaire ───
@@ -587,11 +600,12 @@ function fillAudit(viaDbl){
   const f=S.rec.fields,presel=val(f[F.presel]);
   const dm=val(f[F.decMan]);
   S.sel={conf:val(f[F.conf])||null,on:val(f[F.on])||null,etat:val(f[F.etat])||null,
-         dec:dm||(presel==='Garder si complet'?'Garder':''),      // ligne verte → Garder pré-coché
+         dec:dm||(presel==='Garder si complet'?'Garder':'Ne pas prendre'),      // ligne verte → Garder, sinon Ne pas prendre
          chg:val(f[F.chg])||null,batt:val(f[F.batt])||null,
          def:new Set((f[F.def]||[]).map(val)),acc:new Set((f[F.acc]||[]).map(val))};
   S.ctrl=parseCtrl(f[F.ctrl]);
   S.photos=[];S.plaque=[];S.battPhotos=[];S.hadBattPhoto=!!(f[F.battPhoto]&&f[F.battPhoto].length);
+  S.hadPhotos=!!(f[F.photos]&&f[F.photos].length);S.hadPlaque=!!(f[F.plaque]&&f[F.plaque].length);
   if(S.creating)S.fam=null;
   // palette Envie : celle déjà liée à l'appareil, sinon la dernière choisie sur ce téléphone
   const linked=(f[F.newPal]||[]).map(x=>x.id||x);
@@ -619,7 +633,7 @@ function fillAudit(viaDbl){
   $('inMarque').value=f[F.marqueC]||'';$('inModele').value=f[F.modeleC]||'';$('inSerieC').value=f[F.serieC]||'';
   $('inComment').value=f[F.comment]||'';['thPhotos','thPlaque','thBatt'].forEach(i=>$(i).innerHTML='');
   ['filePhotos','filePlaque','fileBatt'].forEach(i=>$(i).value='');
-  $('cbForceComplet').checked=false;$('cbBattIsolee').checked=!!f[F.battIso];
+  $('cbForceComplet').checked=false;$('cbBattIsolee').checked=!!f[F.battIso];$('cbDemonte').checked=S.sel.def.has(DEMONTE);
   rebuildMenus();toggleNonConf();renderEnvies();
 }
 function rebuildMenus(){
@@ -645,12 +659,15 @@ function rebuildMenus(){
   applyMontre();refreshSingles();updateComplet();updateBatt();
 }
 // Montre sans chargeur : pas de test, contrôle visuel seulement
+// + Appareil démonté : pas de test non plus (S'allume = Non testé, pas de contrôles, photo obligatoire)
 function applyMontre(){
-  const sans=montreSansChargeur();
-  $('boxOn').classList.toggle('hidden',sans);
-  $('boxCtrl').classList.toggle('hidden',sans);
+  const sans=montreSansChargeur(),dem=S.sel.def.has(DEMONTE);
+  $('boxOn').classList.toggle('hidden',sans||dem);
+  $('boxCtrl').classList.toggle('hidden',sans||dem);
   $('chgNote').textContent=sans?'Pas de test : contrôle visuel seulement (écran, dos soulevé, bracelet, état).':'';
+  $('demNote').textContent=dem?'Pas de test : contrôle visuel seulement. Photo de l\'appareil obligatoire (carte « Photos »).':'';
   if(sans){S.sel.on='Non testé';if(!S.sel.batt)S.sel.batt='Non testé';S.sel.acc.delete('Chargeur')}
+  else if(dem)S.sel.on='Non testé';
   else if(S.sel.on==='Non testé')S.sel.on=null;
   if(S.menu.fam==='montre'&&S.sel.chg==='Oui')S.sel.acc.add('Chargeur');
   document.querySelectorAll('[data-group="acc"] .choice').forEach(b=>b.classList.toggle('on',S.sel.acc.has(b.dataset.v)));
@@ -671,13 +688,24 @@ document.addEventListener('click',e=>{
   if(g==='fam'){S.fam=b.dataset.v;box.querySelectorAll('.choice').forEach(x=>x.classList.toggle('on',x===b));rebuildMenus();return}
   if(multi){S.sel[g].has(b.dataset.v)?S.sel[g].delete(b.dataset.v):S.sel[g].add(b.dataset.v);b.classList.toggle('on')}
   else{S.sel[g]=b.dataset.v;box.querySelectorAll('.choice').forEach(x=>x.classList.toggle('on',x===b))}
+  if(g==='def'&&b.dataset.v===DEMONTE){$('cbDemonte').checked=S.sel.def.has(DEMONTE);applyMontre();refreshSingles()}
   if(g==='def'&&b.dataset.v===DOS_SOULEVE&&S.sel.def.has(DOS_SOULEVE)){S.sel.batt='Gonflée';refreshSingles();updateBatt();toast('Dos soulevé → batterie gonflée : à retirer et isoler','err',3500)}
   if(g==='conf')toggleNonConf();if(g==='acc')updateComplet();
   if(g==='chg'){applyMontre();refreshSingles();updateComplet()}
   if(g==='batt')updateBatt();
   if(g==='dec')updateDest();
 });
-function toggleNonConf(){$('boxNonConf').classList.toggle('hidden',S.sel.conf!=='Non conforme')}
+function toggleNonConf(){$('boxNonConf').classList.toggle('hidden',S.sel.conf!=='Non conforme');togglePlaque()}
+// Photo de plaque : non conforme / hors listing (comme avant) ou appareil gardé (obligatoire, pour l'enregistrement atelier)
+function togglePlaque(){
+  const garder=S.sel.dec==='Garder';
+  $('boxPlaque').classList.toggle('hidden',!(garder||S.sel.conf==='Non conforme'||S.creating));
+  $('plaqueLbl').textContent='Photo de la plaque signalétique'+(garder?(S.hadPlaque?' (déjà enregistrée)':' — obligatoire si gardé'):'');
+}
+$('cbDemonte').onchange=()=>{
+  if($('cbDemonte').checked)S.sel.def.add(DEMONTE);else S.sel.def.delete(DEMONTE);
+  buildChoices('def',[...new Set([...S.menu.def,...S.sel.def])]);applyMontre();refreshSingles();
+};
 function isComplet(){return $('cbForceComplet').checked||S.required.every(a=>S.sel.acc.has(a))}
 function updateComplet(){
   const miss=S.required.filter(a=>!S.sel.acc.has(a));
@@ -709,6 +737,8 @@ $('btnValidate').onclick=async()=>{
   if(!s.etat){toast('Choisis l\'état esthétique','err');return}
   if(s.conf==='Non conforme'&&!$('inMarque').value.trim()&&!$('inModele').value.trim()){toast('Indique la marque ou le modèle constaté','err');return}
   if(S.creating&&!$('inSerieC').value.trim()&&!S.plaque.length){toast('N° de série ou photo de plaque obligatoire','err');return}
+  if(s.def.has(DEMONTE)&&!S.photos.length&&!S.hadPhotos){toast('Appareil démonté : photo obligatoire (carte « Photos »)','err',4000);return}
+  if(garder&&!S.plaque.length&&!S.hadPlaque){toast('Appareil gardé : photo de la plaque signalétique obligatoire','err',4000);return}
   if(garder&&!S.envie){toast('Choisis la palette Envie','err');return}
   if(!garder&&!S.pal){toast('Aucune palette en cours : reviens à l\'accueil et appuie sur « Nouvelle palette »','err',4500);return}
   const destId=garder?S.envie:S.pal.id,destName=garder?(S.envies.find(e=>e.id===S.envie)||{}).name:S.pal.name;
@@ -719,7 +749,7 @@ $('btnValidate').onclick=async()=>{
       [F.def]:[...s.def],[F.acc]:[...s.acc],[F.complet]:isComplet(),
       [F.marqueC]:$('inMarque').value.trim()||null,[F.modeleC]:$('inModele').value.trim()||null,[F.serieC]:$('inSerieC').value.trim()||null,
       [F.auditeur]:S.user,[F.dateAudit]:new Date().toISOString(),[F.verrou]:null,[F.comment]:$('inComment').value.trim()||null,
-      [F.ctrl]:montreSansChargeur()?null:(M.ctrl.filter(q=>S.ctrl[q]).map(q=>q+' : '+S.ctrl[q]).join('\n')||null),
+      [F.ctrl]:sansTest()?null:(M.ctrl.filter(q=>S.ctrl[q]).map(q=>q+' : '+S.ctrl[q]).join('\n')||null),
       [F.decMan]:s.dec||null,[F.newPal]:[destId],
       [F.chg]:M.fam==='montre'?s.chg:null,
       [F.batt]:M.batt?s.batt:null,[F.battIso]:battAlert()?$('cbBattIsolee').checked:false

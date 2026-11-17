@@ -2,18 +2,22 @@
 <!--
   audit_lot_bizcom.html — Audit smartphone du lot Bizcom (sinistres CCS Hallennes)
   ─────────────────────────────────────────────────────────────────────────────
-  v1.5 — 12/11/2026
-  - ENVOI SANS PERTE : à la validation, l'audit (champs + photos) est d'abord rangé dans le téléphone (IndexedDB),
-    puis envoyé. Chaque photo envoyée est retirée de la file → plus de photos en double si on réessaie.
-    Si le réseau coupe : « audit gardé dans le téléphone », envoi automatique au retour du réseau (et toutes les minutes).
-    Le nombre d'audits en attente s'affiche dans l'en-tête (📤 n en attente — toucher pour relancer l'envoi).
-  - PALETTES ENVIE : le numéro n'est plus calculé avant la création. La palette est créée d'abord, puis son numéro
-    est déduit de son Numéro auto Airtable → deux téléphones ne peuvent plus créer deux « Envie 3 ».
-  - 429 (trop de requêtes) : 3 essais maximum avec attente croissante, puis bandeau rouge (plus de boucle sans fin).
-  - AVANCEMENT : total du lot lu une fois puis toutes les 30 min ; audités relus toutes les 5 min (au lieu de toute
-    la table toutes les 2 min), et seulement quand la page est à l'écran.
-  v1.4 — 14/10/2026 : palettes P-xxx (Numéro auto), palettes Envie, liste A4, carte Batterie, montres sans chargeur,
-    bandeau « Pas de connexion à Airtable »
+  v1.5 — 17/11/2026
+  - PALETTES : bouton « Choisir une palette » → liste des palettes Lot (nb d'appareils, créateur) ; plusieurs
+    téléphones peuvent remplir la même P-xxx. « Nouvelle palette » ne parle plus de clôture.
+  v1.4 — 14/10/2026
+  - PALETTES : bouton « Nouvelle palette » → crée une ligne dans la table Palettes (tblQnwMbuL0DOwXaU) ; le numéro
+    P-xxx vient du Numéro auto d'Airtable → jamais deux fois le même numéro, même avec 4 téléphones.
+    Chaque appareil validé est relié à la palette en cours de l'opérateur (champ « Nouvelle palette »).
+  - PALETTES ENVIE : si Décision = Garder → l'opérateur choisit Envie 1 / Envie 2… ou « + Nouvelle palette Envie ».
+    Le téléphone retient le dernier choix. Les lignes vertes (présélection) arrivent pré-cochées sur Garder.
+  - LISTE A4 : écran « Imprimer une liste » (toutes les palettes, nb d'appareils, valeur d'achat) + impression.
+  - BATTERIE : carte « Batterie » (PC portables, montres, tablettes/liseuses, Switch / ROG Ally, autres).
+    Gonflée / Fuite / Chauffe → bandeau rouge, photo batterie obligatoire, case « retirée et isolée » obligatoire.
+    L'appareil suit ensuite son chemin normal (palette du lot ou Envie).
+  - MONTRES : « Chargeur présent ? » — si Non : pas de test (S'allume = Non testé), contrôle visuel seulement,
+    défaut « Dos soulevé (batterie gonflée) » qui déclenche l'alerte batterie.
+  - CONNEXION : bandeau rouge « Pas de connexion à Airtable » avec la raison, au lieu d'un faux « introuvable ».
   v1.3 — 13/10/2026 : menus par type d'appareil, contrôles spécifiques, bloc Décision, type pour hors listing
   v1.2 — 13/10/2026 : correctif « undefined » (returnFieldsByFieldId dans le corps des PATCH/POST)
   v1.1 — 13/10/2026 : recherche NOPROFORMA + doublons + n° de fiche, choix si numéro ambigu
@@ -34,7 +38,6 @@
   header h1{font-size:17px;margin:0;flex:1}
   header .who{font-size:13px;opacity:.95;text-align:right}
   #hdrPal{font-weight:700;font-size:14px}
-  #hdrQueue{font-weight:700;color:#ffd166}
   #connBanner{position:sticky;top:44px;z-index:6;background:var(--bad);color:#fff;font-weight:700;padding:10px 14px;font-size:14px}
   main{padding:12px;max-width:560px;margin:0 auto}
   .card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
@@ -93,7 +96,7 @@
 <body>
 <header>
   <h1>Audit lot Bizcom</h1>
-  <div class="who"><div id="hdrUser"></div><div id="hdrPal"></div><div id="hdrProg"></div><div id="hdrQueue"></div></div>
+  <div class="who"><div id="hdrUser"></div><div id="hdrPal"></div><div id="hdrProg"></div></div>
 </header>
 <div id="connBanner" class="hidden"></div>
 <main>
@@ -117,11 +120,13 @@
   <div class="card">
     <h2>Ma palette en cours</h2>
     <div class="palname" id="palName">—</div>
-    <div class="muted" id="palInfo">Aucune palette. Appuie sur « Nouvelle palette » avant de commencer.</div>
+    <div class="muted" id="palInfo">Aucune palette. Choisis une palette ou crée-en une avant de commencer.</div>
     <div class="row">
-      <button class="btn" id="btnNewPal">Nouvelle palette</button>
-      <button class="btn sec" id="btnPrintMenu">Imprimer une liste</button>
+      <button class="btn" id="btnPickPal">Choisir une palette</button>
+      <button class="btn sec" id="btnNewPal">Nouvelle palette</button>
     </div>
+    <div class="list" id="palPick"></div>
+    <button class="btn sec" id="btnPrintMenu">Imprimer une liste</button>
   </div>
   <div class="card">
     <h2>Numéro de l'étiquette</h2>
@@ -285,7 +290,7 @@
 
 <script>
 'use strict';
-// ─── Constantes Airtable (IDs vérifiés le 12/11/2026) ───
+// ─── Constantes Airtable (IDs vérifiés le 14/10/2026) ───
 const BASE='appcCnZx0H4Dd9SM5', TABLE='tblQ9qckCqsh3fjwP', T_PAL='tblQnwMbuL0DOwXaU';
 const F={
   nopro:'flds0je0wSxIldZiD', fiche:'fldy1xClptLbVxfNe', autresNopro:'fldN8gsSuqherWbis', doublon:'fldZWtAhIutzYqOdb',
@@ -360,19 +365,14 @@ function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt
 function val(v){if(v==null)return'';if(typeof v==='object'&&!Array.isArray(v))return v.name??'';return v}
 function fstr(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
 function setConn(ok,why){const b=$('connBanner');b.classList.toggle('hidden',ok);if(!ok)b.textContent='⚠ Pas de connexion à Airtable — '+why}
-const isConnErr=e=>e&&(e.message==='auth'||e.message==='conn');
 
 // Appel Airtable. Erreur réseau ou réponse anormale → bandeau rouge (et jamais un faux « introuvable »)
-// v1.5 : 429 → 3 essais maximum (attente 1,2 s / 2,4 s / 3,6 s), puis erreur de connexion
-async function api(path,opt={},table=TABLE,tries=0){
+async function api(path,opt={},table=TABLE){
   let r;
   try{r=await fetch('https://api.airtable.com/v0/'+BASE+'/'+table+path,{...opt,headers:{'Authorization':'Bearer '+S.token,'Content-Type':'application/json'}})}
   catch(e){setConn(false,'réseau coupé, ou page ouverte ailleurs que dans Chrome ('+e.message+')');throw new Error('conn')}
   if(r.status===401||r.status===403){setConn(false,'clé refusée (refais le réglage)');throw new Error('auth')}
-  if(r.status===429){
-    if(tries>=3){setConn(false,'Airtable surchargé (trop de requêtes), réessaie dans un instant');throw new Error('conn')}
-    await new Promise(z=>setTimeout(z,1200*(tries+1)));return api(path,opt,table,tries+1);
-  }
+  if(r.status===429){await new Promise(z=>setTimeout(z,1200));return api(path,opt,table)}
   let j;try{j=await r.json()}catch(e){setConn(false,'réponse illisible (HTTP '+r.status+')');throw new Error('conn')}
   if(!r.ok)throw new Error((j.error&&(j.error.message||j.error.type))||('HTTP '+r.status));
   setConn(true);return j;
@@ -388,13 +388,12 @@ async function getRec(id,table=TABLE){return api('/'+id+'?returnFieldsByFieldId=
 // returnFieldsByFieldId : paramètre d'URL pour GET, mais paramètre du CORPS pour PATCH / POST (doc Airtable vérifiée 13/10/2026)
 async function patch(id,fields,table=TABLE){return api('/'+id,{method:'PATCH',body:JSON.stringify({fields,typecast:true,returnFieldsByFieldId:true})},table)}
 async function createRec(fields,table=TABLE){return api('',{method:'POST',body:JSON.stringify({fields,typecast:true,returnFieldsByFieldId:true})},table)}
-function showErr(e){if(!isConnErr(e))toast('Erreur : '+e.message,'err',4500);else toast('Pas de connexion à Airtable','err',3000)}
+function showErr(e){if(!['auth','conn'].includes(e.message))toast('Erreur : '+e.message,'err',4500);else toast('Pas de connexion à Airtable','err',3000)}
 async function upload(recId,fieldId,file){
   const b64=await new Promise((ok,ko)=>{const fr=new FileReader();fr.onload=()=>ok(String(fr.result).split(',')[1]);fr.onerror=ko;fr.readAsDataURL(file)});
   let r;
   try{r=await fetch('https://content.airtable.com/v0/'+BASE+'/'+recId+'/'+fieldId+'/uploadAttachment',{method:'POST',headers:{'Authorization':'Bearer '+S.token,'Content-Type':'application/json'},body:JSON.stringify({contentType:file.type||'image/jpeg',file:b64,filename:file.name||'photo.jpg'})})}
   catch(e){setConn(false,'envoi photo impossible ('+e.message+')');throw new Error('conn')}
-  if(r.status===429){throw new Error('conn')}
   if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error((j.error&&j.error.message)||('Photo HTTP '+r.status))}
 }
 async function shrink(file){
@@ -406,56 +405,6 @@ async function shrink(file){
     return new File([blob],(file.name||'photo').replace(/\.\w+$/,'')+'.jpg',{type:'image/jpeg'});
   }catch(e){return file}
 }
-
-// ─── File d'attente dans le téléphone (v1.5) ───
-// Un audit validé = un « job » rangé dans IndexedDB (champs + photos). Il n'est effacé qu'une fois tout envoyé.
-// Chaque étape réussie est notée dans le job → en cas de reprise, rien n'est envoyé deux fois.
-let QDB=null;
-function qOpen(){
-  if(QDB)return Promise.resolve(QDB);
-  return new Promise((ok,ko)=>{const r=indexedDB.open('bz_queue',1);
-    r.onupgradeneeded=()=>r.result.createObjectStore('jobs',{keyPath:'id'});
-    r.onsuccess=()=>{QDB=r.result;ok(QDB)};r.onerror=()=>ko(r.error)});
-}
-async function qTx(mode,fn){
-  const db=await qOpen();
-  return new Promise((ok,ko)=>{const t=db.transaction('jobs',mode);const req=fn(t.objectStore('jobs'));
-    t.oncomplete=()=>ok(req?req.result:undefined);t.onerror=()=>ko(t.error)});
-}
-async function qSave(j){try{await qTx('readwrite',s=>s.put(j))}catch(e){}}
-async function qRemove(id){try{await qTx('readwrite',s=>s.delete(id))}catch(e){}}
-async function qAll(){try{return (await qTx('readonly',s=>s.getAll()))||[]}catch(e){return[]}}
-async function runJob(job,onStep){
-  if(!job.saved){
-    if(job.recId)await patch(job.recId,job.fields);
-    else{const r=await createRec(job.fields);job.recId=r.id}
-    job.saved=true;await qSave(job);
-  }
-  while(job.photos.length){
-    if(onStep)onStep(job);
-    const [fid,file]=job.photos[0];
-    await upload(job.recId,fid,file);
-    job.photos.shift();job.sent=(job.sent||0)+1;await qSave(job);
-  }
-  await qRemove(job.id);
-}
-let flushing=false;
-async function flushQueue(){
-  if(flushing||!S.token)return;flushing=true;
-  try{
-    for(const j of await qAll()){
-      try{await runJob(j)}
-      catch(e){if(isConnErr(e))break;j.err=e.message;await qSave(j)}
-    }
-  }finally{flushing=false;renderPending()}
-}
-async function renderPending(){
-  const n=(await qAll()).length;
-  $('hdrQueue').textContent=n?`📤 ${n} en attente`:'';
-}
-$('hdrQueue').onclick=()=>{toast('Envoi des audits en attente…','info');flushQueue()};
-window.addEventListener('online',flushQueue);
-setInterval(flushQueue,60000);
 
 // ─── Réglages ───
 function initSetup(){
@@ -477,15 +426,31 @@ function renderPal(nb){
   $('palName').textContent=S.pal?S.pal.name:'—';
   $('hdrPal').textContent=S.pal?'Palette '+S.pal.name:'';
   $('palInfo').textContent=S.pal?(nb!=null?nb+' appareil(s) sur cette palette':'Les appareils audités (non gardés) vont sur cette palette.')
-    :'Aucune palette. Appuie sur « Nouvelle palette » avant de commencer.';
+    :'Aucune palette. Choisis une palette ou crée-en une avant de commencer.';
 }
+// Choisir une palette du lot déjà créée (plusieurs téléphones peuvent remplir la même)
+$('btnPickPal').onclick=async()=>{
+  const box=$('palPick');
+  if(box.innerHTML){box.innerHTML='';return}
+  box.innerHTML='<p class="muted">Chargement…</p>';
+  try{
+    const recs=await listAll(T_PAL,'filterByFormula='+encodeURIComponent("{Type}='Lot'")+'&sort%5B0%5D%5Bfield%5D=Num%C3%A9ro%20auto&sort%5B0%5D%5Bdirection%5D=desc');
+    box.innerHTML=recs.length?'':'<p class="muted">Aucune palette créée pour l\'instant : appuie sur « Nouvelle palette ».</p>';
+    recs.forEach(r=>{const f=r.fields,b=document.createElement('button'),cur=S.pal&&S.pal.id===r.id;
+      b.innerHTML=`<b>${esc(f[P.name]||'?')}</b>${cur?' <span style="color:var(--ok)">← en cours</span>':''} — ${f[P.nb]||0} appareil(s)<br><span class="muted">créée par ${esc(f[P.op]||'?')}</span>`;
+      b.onclick=()=>{S.pal={id:r.id,name:f[P.name]||'?'};store.set('bz_pal_id',r.id);store.set('bz_pal_name',S.pal.name);
+        box.innerHTML='';renderPal(f[P.nb]||0);toast('Palette '+S.pal.name+' sélectionnée','ok')};
+      box.appendChild(b)});
+  }catch(e){box.innerHTML='';showErr(e)}
+};
 async function refreshPal(){
   if(!S.pal)return renderPal();
   try{const r=await getRec(S.pal.id,T_PAL);S.pal.name=r.fields[P.name]||S.pal.name;store.set('bz_pal_name',S.pal.name);renderPal(r.fields[P.nb]||0)}
   catch(e){renderPal()}
 }
 $('btnNewPal').onclick=async()=>{
-  if(S.pal&&!confirm(`Clôturer la palette ${S.pal.name} et en commencer une nouvelle ?`))return;
+  if(!confirm('Créer une nouvelle palette ?'+(S.pal?`\n(${S.pal.name} reste disponible dans « Choisir une palette »)`:'')))return;
+  $('palPick').innerHTML='';
   const b=$('btnNewPal');b.disabled=true;
   try{
     // Le numéro vient du Numéro auto d'Airtable → unique même si 4 téléphones appuient en même temps
@@ -498,24 +463,15 @@ $('btnNewPal').onclick=async()=>{
 };
 async function loadEnvies(){
   const recs=await listAll(T_PAL,'filterByFormula='+encodeURIComponent("{Type}='Envie'")+'&sort%5B0%5D%5Bfield%5D=Num%C3%A9ro%20auto');
-  S.envies=recs.map(r=>({id:r.id,name:r.fields[P.name]||'Envie ?',auto:Number(r.fields[P.auto])||0}));
+  S.envies=recs.map(r=>({id:r.id,name:r.fields[P.name]||'Envie ?'}));
 }
-// v1.5 : la palette est créée AVANT de choisir son numéro. Son rang parmi les palettes Envie (ordre du Numéro auto
-// Airtable, unique) donne le numéro → deux téléphones en même temps obtiennent deux numéros différents.
-// Si une palette a été supprimée, on prend au moins « plus grand numéro existant avant elle + 1 ».
 async function newEnvie(){
-  if(!confirm('Créer une nouvelle palette Envie ?'))return;
-  try{
-    const r=await createRec({[P.type]:'Envie',[P.op]:S.user},T_PAL);
-    const mine=Number(r.fields[P.auto])||0;
-    await loadEnvies();
-    const lower=S.envies.filter(e=>e.auto<mine);
-    const nums=lower.map(e=>parseInt(String(e.name).replace(/\D/g,''),10)).filter(n=>!isNaN(n));
-    const name='Envie '+Math.max(lower.length+1,(nums.length?Math.max(...nums):0)+1);
-    await patch(r.id,{[P.name]:name},T_PAL);
-    const me=S.envies.find(e=>e.id===r.id);if(me)me.name=name;else S.envies.push({id:r.id,name,auto:mine});
-    S.envie=r.id;store.set('bz_envie',r.id);renderEnvies();toast(name+' créée','ok');
-  }catch(e){showErr(e)}
+  const nums=S.envies.map(e=>parseInt(String(e.name).replace(/\D/g,''),10)).filter(n=>!isNaN(n));
+  const name='Envie '+((nums.length?Math.max(...nums):0)+1);
+  if(!confirm(`Créer la palette « ${name} » ?`))return;
+  try{const r=await createRec({[P.type]:'Envie',[P.op]:S.user,[P.name]:name},T_PAL);
+    S.envies.push({id:r.id,name});S.envie=r.id;store.set('bz_envie',r.id);renderEnvies();toast(name+' créée','ok')}
+  catch(e){showErr(e)}
 }
 function renderEnvies(){
   const box=$('envieList');box.innerHTML='';
@@ -540,8 +496,8 @@ function renderPad(){
     b.onclick=()=>{if(k==='⌫')code=code.slice(0,-1);else if(k==='C')code='';else if(code.length<8)code+=k;$('display').textContent=code};p.appendChild(b)});
 }
 function goInput(){
-  $('hdrUser').textContent=S.user;code='';$('display').textContent='';$('inSerial').value='';$('serialResults').innerHTML='';$('findResults').innerHTML='';
-  show('scrInput');renderPal();refreshPal();refreshProgress();renderPending();flushQueue();
+  $('hdrUser').textContent=S.user;code='';$('palPick').innerHTML='';$('display').textContent='';$('inSerial').value='';$('serialResults').innerHTML='';$('findResults').innerHTML='';
+  show('scrInput');renderPal();refreshPal();refreshProgress();
 }
 $('btnFind').onclick=async()=>{
   if(code.length<4){toast('Numéro trop court','err');return}
@@ -757,45 +713,30 @@ $('btnValidate').onclick=async()=>{
   if(!garder&&!S.pal){toast('Aucune palette en cours : reviens à l\'accueil et appuie sur « Nouvelle palette »','err',4500);return}
   const destId=garder?S.envie:S.pal.id,destName=garder?(S.envies.find(e=>e.id===S.envie)||{}).name:S.pal.name;
   const btn=$('btnValidate');btn.disabled=true;btn.textContent='Enregistrement…';
-  const fields={
-    [F.statut]:'Terminé',[F.conf]:S.creating?'Hors listing':s.conf,[F.on]:s.on,[F.etat]:s.etat,
-    [F.def]:[...s.def],[F.acc]:[...s.acc],[F.complet]:isComplet(),
-    [F.marqueC]:$('inMarque').value.trim()||null,[F.modeleC]:$('inModele').value.trim()||null,[F.serieC]:$('inSerieC').value.trim()||null,
-    [F.auditeur]:S.user,[F.dateAudit]:new Date().toISOString(),[F.verrou]:null,[F.comment]:$('inComment').value.trim()||null,
-    [F.ctrl]:montreSansChargeur()?null:(M.ctrl.filter(q=>S.ctrl[q]).map(q=>q+' : '+S.ctrl[q]).join('\n')||null),
-    [F.decMan]:s.dec||null,[F.newPal]:[destId],
-    [F.chg]:M.fam==='montre'?s.chg:null,
-    [F.batt]:M.batt?s.batt:null,[F.battIso]:battAlert()?$('cbBattIsolee').checked:false
-  };
-  if(S.creating){
-    fields[F.nopro]=code||('HL-'+new Date().toISOString().slice(0,16).replace(/\D/g,''));
-    fields[F.presel]='Non';fields[F.type]=FAM2TYPE[S.fam||'autre'];
-  }
-  // v1.5 : l'audit est rangé dans le téléphone AVANT l'envoi ; chaque photo envoyée est retirée de la file
-  const photos=[...S.photos.map(p=>[F.photos,p]),...S.plaque.map(p=>[F.plaque,p]),...S.battPhotos.map(p=>[F.battPhoto,p])];
-  const job={id:'j'+Date.now()+'-'+Math.random().toString(36).slice(2,7),recId:S.creating?null:S.rec.id,fields,photos,saved:false,sent:0};
-  const total=photos.length;
-  await qSave(job);
   try{
-    await runJob(job,j=>{btn.textContent=`Photo ${(j.sent||0)+1}/${total}…`});
-    let dec='';try{dec=val((await getRec(job.recId)).fields[F.decFin])||''}catch(e){}
+    const fields={
+      [F.statut]:'Terminé',[F.conf]:S.creating?'Hors listing':s.conf,[F.on]:s.on,[F.etat]:s.etat,
+      [F.def]:[...s.def],[F.acc]:[...s.acc],[F.complet]:isComplet(),
+      [F.marqueC]:$('inMarque').value.trim()||null,[F.modeleC]:$('inModele').value.trim()||null,[F.serieC]:$('inSerieC').value.trim()||null,
+      [F.auditeur]:S.user,[F.dateAudit]:new Date().toISOString(),[F.verrou]:null,[F.comment]:$('inComment').value.trim()||null,
+      [F.ctrl]:montreSansChargeur()?null:(M.ctrl.filter(q=>S.ctrl[q]).map(q=>q+' : '+S.ctrl[q]).join('\n')||null),
+      [F.decMan]:s.dec||null,[F.newPal]:[destId],
+      [F.chg]:M.fam==='montre'?s.chg:null,
+      [F.batt]:M.batt?s.batt:null,[F.battIso]:battAlert()?$('cbBattIsolee').checked:false
+    };
+    let rec;
+    if(S.creating){
+      fields[F.nopro]=code||('HL-'+new Date().toISOString().slice(0,16).replace(/\D/g,''));
+      fields[F.presel]='Non';fields[F.type]=FAM2TYPE[S.fam||'autre'];
+      rec=await createRec(fields);
+    }else rec=await patch(S.rec.id,fields);
+    const all=[...S.photos.map(p=>[F.photos,p]),...S.plaque.map(p=>[F.plaque,p]),...S.battPhotos.map(p=>[F.battPhoto,p])];
+    for(let i=0;i<all.length;i++){btn.textContent=`Photo ${i+1}/${all.length}…`;await upload(rec.id,all[i][0],all[i][1])}
+    const dec=(await getRec(rec.id)).fields[F.decFin]||'';
     toast(`Enregistré → ${destName}`+(dec?' · '+dec:''),garder?'ok':'info',3500);
     goInput();
-  }catch(e){
-    if(isConnErr(e)){
-      toast(`Pas de réseau : audit gardé dans le téléphone (→ ${destName}). Il partira tout seul au retour du réseau.`,'info',5500);
-      goInput();
-    }else if(!job.saved){
-      // Airtable a refusé la fiche : rien n'est parti, on reste sur le formulaire pour corriger
-      await qRemove(job.id);
-      toast('Erreur : '+e.message+' — rien n\'est perdu, réessaie','err',5000);
-    }else{
-      // Fiche enregistrée mais une photo refusée : les photos restantes sont gardées dans le téléphone
-      job.err=e.message;await qSave(job);
-      toast('Fiche enregistrée, mais photo refusée ('+e.message+') — gardée dans le téléphone','err',5500);
-      goInput();
-    }
-  }finally{btn.disabled=false;btn.textContent='✔ Valider l\'audit';renderPending()}
+  }catch(e){showErr(e);if(e.message!=='auth'&&e.message!=='conn')toast('Rien n\'est perdu, réessaie','err',3000)}
+  finally{btn.disabled=false;btn.textContent='✔ Valider l\'audit'}
 };
 $('btnCancel').onclick=async()=>{
   if(S.rec&&S.rec.id){try{await patch(S.rec.id,{[F.statut]:S.rec.prevStatut||null,[F.verrou]:null})}catch(e){}}
@@ -830,20 +771,16 @@ $('btnDoPrint').onclick=()=>window.print();
 $('btnPrintBack').onclick=()=>goInput();
 $('btnPrintBack2').onclick=()=>{$('palList').parentElement.classList.remove('hidden');$('printSheet').classList.add('hidden');$('printBtns').classList.add('hidden')};
 
-// ─── Avancement (v1.5 : total toutes les 30 min, audités toutes les 5 min, seulement page à l'écran) ───
-let progBusy=false,progTotal=null,progTotalAt=0;
+// ─── Avancement (toutes les 2 min) ───
+let progBusy=false;
 async function refreshProgress(){
-  if(progBusy||!S.token||document.hidden)return;progBusy=true;
+  if(progBusy||!S.token)return;progBusy=true;
   try{
-    if(progTotal==null||Date.now()-progTotalAt>30*60000){
-      progTotal=(await listAll(TABLE,'pageSize=100&fields%5B%5D='+F.statut)).length;progTotalAt=Date.now();
-    }
-    const done=(await listAll(TABLE,'pageSize=100&fields%5B%5D='+F.statut+'&filterByFormula='+encodeURIComponent("{Statut audit}='Terminé'"))).length;
-    $('hdrProg').textContent=`${done} / ${progTotal} audités`;
+    const recs=await listAll(TABLE,'pageSize=100&fields%5B%5D='+F.statut);
+    $('hdrProg').textContent=`${recs.filter(r=>val(r.fields[F.statut])==='Terminé').length} / ${recs.length} audités`;
   }catch(e){$('hdrProg').textContent=''}finally{progBusy=false}
 }
-setInterval(refreshProgress,5*60000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshProgress()});
+setInterval(refreshProgress,120000);
 
 renderPad();initSetup();
 </script>

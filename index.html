@@ -7,6 +7,7 @@
     téléphones peuvent remplir la même P-xxx. « Nouvelle palette » ne parle plus de clôture.
   - DÉMONTÉ : case « Appareil démonté » → S'allume = Non testé, pas de contrôles, défaut « Appareil démonté », photo obligatoire.
   - GARDÉ : photo de la plaque signalétique obligatoire (enregistrement atelier).
+  - IMPRESSION : affiche A4 recto = numéro de palette géant, verso = codes NOPROFORMA seuls (ni nom, ni montant).
   - DÉCISION : pré-réglée sur « Ne pas prendre » si la présélection n'est pas « Garder si complet ».
   v1.4 — 14/10/2026
   - PALETTES : bouton « Nouvelle palette » → crée une ligne dans la table Palettes (tblQnwMbuL0DOwXaU) ; le numéro
@@ -90,7 +91,16 @@
   #printSheet table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
   #printSheet th,#printSheet td{border:1px solid #999;padding:4px 5px;text-align:left;vertical-align:top}
   #printSheet th{background:#eee}
+  /* Affiche palette : recto = numéro géant, verso = codes NOPROFORMA */
+  .pg{background:#fff}
+  .recto{min-height:60vh;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:900;line-height:1;word-break:break-word}
+  .verso h3{font-size:22pt;margin:0 0 10px}
+  .codes{display:grid;grid-template-columns:repeat(4,1fr);gap:4px 12px;font-size:16pt;font-weight:700;font-family:ui-monospace,Consolas,monospace}
+  @page{size:A4 portrait;margin:12mm}
   @media print{
+    .pg{page-break-after:always;break-after:page}
+    .pg:last-child{page-break-after:auto;break-after:auto}
+    .recto{min-height:270mm}
     header,#connBanner,.noprint,.toast{display:none!important}
     body{background:#fff} main{max-width:none;padding:0} .card{box-shadow:none;padding:0}
   }
@@ -788,12 +798,13 @@ $('btnPrintMenu').onclick=async()=>{
 async function printPal(name){
   try{
     const recs=await listAll(TABLE,'filterByFormula='+encodeURIComponent(`FIND('|${fstr(name)}|','|'&ARRAYJOIN({Nouvelle palette},'|')&'|')`)
-      +'&sort%5B0%5D%5Bfield%5D=Marque&sort%5B1%5D%5Bfield%5D=Mod%C3%A8le');
-    const tot=recs.reduce((a,r)=>a+(Number(r.fields[F.achat])||0),0);
-    const rows=recs.map((r,i)=>{const f=r.fields;return `<tr><td>${i+1}</td><td>${esc(f[F.nopro])}</td><td>${esc(f[F.fiche])}</td><td>${esc(val(f[F.marque]))}</td><td>${esc(f[F.modele])}</td><td>${esc(f[F.serie]||f[F.serieC]||'')}</td><td>${esc(f[F.palette]??'')}</td><td>${esc(val(f[F.decFin]))}${val(f[F.alerteBatt])?' · ⚠ batterie retirée':''}</td></tr>`}).join('');
-    $('printSheet').innerHTML=`<h1>Palette ${esc(name)}</h1>
-      <div><b>${recs.length} appareil(s)</b> · valeur d'achat ${tot.toLocaleString('fr-FR',{style:'currency',currency:'EUR'})} · imprimé le ${new Date().toLocaleString('fr-FR')} par ${esc(S.user)}</div>
-      <table><thead><tr><th>#</th><th>NOPROFORMA</th><th>N° fiche</th><th>Marque</th><th>Modèle</th><th>N° série</th><th>Pal. origine</th><th>Décision</th></tr></thead><tbody>${rows}</tbody></table>`;
+      +'&fields%5B%5D='+F.nopro);
+    // Verso : codes NOPROFORMA seuls (pas de nom, pas de montant), triés
+    const codes=recs.map(r=>String(r.fields[F.nopro]??'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'fr',{numeric:true}));
+    const pt=Math.min(250,Math.round(800/Math.max(String(name).length,1)));   // numéro le plus gros possible sur un A4
+    $('printSheet').innerHTML=`<div class="pg recto" style="font-size:${pt}pt">${esc(name)}</div>
+      <div class="pg verso"><h3>${esc(name)} — ${codes.length} appareil(s)</h3>
+      <div class="codes">${codes.map(c=>`<div>${esc(c)}</div>`).join('')}</div></div>`;
     $('printSheet').classList.remove('hidden');$('printBtns').classList.remove('hidden');$('palList').parentElement.classList.add('hidden');
   }catch(e){showErr(e)}
 }
